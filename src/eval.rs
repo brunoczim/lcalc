@@ -22,30 +22,35 @@ fn evaluator(starter: Expr) -> Expr {
     let mut exprs = Vec::with_capacity(16);
     ops.push(Op::Eval);
     exprs.push(starter);
+
     while let Some(op) = ops.pop() {
         match op {
-            Op::Eval => match exprs.pop().unwrap() {
-                Var(s) => exprs.push(Var(s)),
-                App(fun, arg) => {
-                    exprs.push(*fun);
-                    exprs.push(*arg);
-                    ops.push(Op::Apply);
-                    ops.push(Op::Eval);
-                    ops.push(Op::Swap);
-                    ops.push(Op::Eval);
-                },
-                Lambda(arg, body) => {
-                    exprs.push(*body);
-                    ops.push(Op::Lambda(arg));
-                    ops.push(Op::Eval);
-                },
+            Op::Eval => {
+                match exprs.pop().unwrap() {
+                    Var(s) => exprs.push(Var(s)),
+                    App(fun, arg) => {
+                        exprs.push(*fun);
+                        exprs.push(*arg);
+                        ops.push(Op::Apply);
+                        ops.push(Op::Eval);
+                        ops.push(Op::Swap);
+                        ops.push(Op::Eval);
+                    },
+                    Lambda(arg, body) => {
+                        exprs.push(*body);
+                        ops.push(Op::Lambda(arg));
+                        ops.push(Op::Eval);
+                    },
+                }
             },
+
             Op::Swap => {
                 let x = exprs.pop().unwrap();
                 let y = exprs.pop().unwrap();
                 exprs.push(x);
                 exprs.push(y);
             },
+
             Op::Apply => {
                 let fun = exprs.pop().unwrap();
                 let arg = exprs.pop().unwrap();
@@ -58,22 +63,21 @@ fn evaluator(starter: Expr) -> Expr {
                     _ => exprs.push(App(Box::new(fun), Box::new(arg))),
                 }
             },
+
             Op::Lambda(arg) => {
                 let body = exprs.pop().unwrap();
                 exprs.push(Lambda(arg, Box::new(body)));
             },
         }
     }
+
     let result = exprs.pop().unwrap();
     debug_assert!(exprs.len() == 0);
     result
 }
 
 impl Expr {
-
-    pub fn eval(self) -> Self {
-        evaluator(self)
-    }
+    pub fn eval(self) -> Self { evaluator(self) }
 
     pub fn apply(self, arg: Self) -> Self {
         evaluator(App(Box::new(self), Box::new(arg)))
