@@ -30,13 +30,6 @@ where
                 continue;
             },
         };
-        match ast.eval() {
-            Ok(expr) => {
-                output.write(format!("{}\n", expr).as_bytes())?;
-            },
-            Err(e) => {
-                err.write(format!("Error: {}\n", e).as_bytes())?;
-            },
-        }
+        output.write(format!("{}\n", ast.eval()).as_bytes())?;
     }
 }
