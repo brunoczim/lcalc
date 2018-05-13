@@ -9,41 +9,97 @@ pub enum Expr {
     Lambda(String, Box<Expr>),
 }
 
-impl Expr {
-    pub fn eval(self) -> Self {
-        match self {
-            Var(name) => Var(name),
-            App(fun, arg) => fun.eval().apply(arg.eval()),
-            Lambda(arg, body) => Lambda(arg, Box::new(body.eval())),
+#[derive(Debug, Clone)]
+enum Op {
+    Eval,
+    Swap,
+    Apply,
+    Lambda(String),
+}
+
+fn evaluator(starter: Expr) -> Expr {
+    let mut ops = Vec::with_capacity(16);
+    let mut exprs = Vec::with_capacity(16);
+    ops.push(Op::Eval);
+    exprs.push(starter);
+    while let Some(op) = ops.pop() {
+        match op {
+            Op::Eval => match exprs.pop().unwrap() {
+                Var(s) => exprs.push(Var(s)),
+                App(fun, arg) => {
+                    exprs.push(*fun);
+                    exprs.push(*arg);
+                    ops.push(Op::Apply);
+                    ops.push(Op::Eval);
+                    ops.push(Op::Swap);
+                    ops.push(Op::Eval);
+                },
+                Lambda(arg, body) => {
+                    exprs.push(*body);
+                    ops.push(Op::Lambda(arg));
+                    ops.push(Op::Eval);
+                },
+            },
+            Op::Swap => {
+                let x = exprs.pop().unwrap();
+                let y = exprs.pop().unwrap();
+                exprs.push(x);
+                exprs.push(y);
+            },
+            Op::Apply => {
+                let fun = exprs.pop().unwrap();
+                let arg = exprs.pop().unwrap();
+                match fun {
+                    Lambda(name, mut body) => {
+                        body.replace(&name, &arg);
+                        exprs.push(*body);
+                        ops.push(Op::Eval);
+                    },
+                    _ => exprs.push(App(Box::new(fun), Box::new(arg))),
+                }
+            },
+            Op::Lambda(arg) => {
+                let body = exprs.pop().unwrap();
+                exprs.push(Lambda(arg, Box::new(body)));
+            },
         }
+    }
+    let result = exprs.pop().unwrap();
+    debug_assert!(exprs.len() == 0);
+    result
+}
+
+impl Expr {
+
+    pub fn eval(self) -> Self {
+        evaluator(self)
     }
 
     pub fn apply(self, arg: Self) -> Self {
-        match self {
-            Lambda(name, mut body) => {
-                body.replace(&name, &arg);
-                body.eval()
-            },
-            val => App(Box::new(val), Box::new(arg)),
-        }
+        evaluator(App(Box::new(self), Box::new(arg)))
     }
 
     pub fn replace(&mut self, name: &str, val: &Self) {
-        match self {
-            Var(ref s) => {
-                if s == name {
-                    *self = val.clone()
-                }
-            },
-            App(ref mut fun, ref mut arg) => {
-                fun.replace(name, val);
-                arg.replace(name, val);
-            },
-            Lambda(ref s, ref mut body) => {
-                if s != name {
-                    body.replace(name, val);
-                }
-            },
+        let mut stack = Vec::with_capacity(8);
+        stack.push(self);
+        while let Some(refer) = stack.pop() {
+            match refer {
+                Var(ref s) => {
+                    if s == name {
+                        *refer = val.clone()
+                    }
+                },
+                App(ref mut fun, ref mut arg) => {
+                    stack.reserve(2);
+                    stack.push(fun);
+                    stack.push(arg);
+                },
+                Lambda(ref s, ref mut body) => {
+                    if s != name {
+                        stack.push(body);
+                    }
+                },
+            }
         }
     }
 }
