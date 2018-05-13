@@ -67,6 +67,7 @@ where
         for &(kind, pred) in preds.iter() {
             while pred(self.grammar, ch, step, &self.src[start..end]) {
                 self.iter.next();
+                step += 1;
                 match self.iter.peek() {
                     Some(tpl) => {
                         end = tpl.0;
@@ -77,7 +78,6 @@ where
                         break;
                     },
                 };
-                step += 1;
             }
             if step > 0 {
                 return Some(Ok(Token {

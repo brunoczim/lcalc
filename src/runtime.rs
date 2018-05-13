@@ -1,35 +1,27 @@
-use std::io::{self, BufRead, Write};
-
 use grammar::Grammar;
 use parser::{Lexer, Parser};
+use rustyline::{error::ReadlineError, Editor, Result};
 
-pub fn repl<G, I, O, E>(
-    grammar: &G,
-    input: &mut I,
-    output: &mut O,
-    err: &mut E,
-) -> io::Result<()>
+pub fn repl<G>(grammar: &G) -> Result<()>
 where
     G: Grammar,
-    I: BufRead,
-    O: Write,
-    E: Write,
 {
+    let mut editor = Editor::<()>::new();
     loop {
-        output.write(b"> ")?;
-        output.flush()?;
-        err.flush()?;
-        let mut line = String::new();
-        if input.read_line(&mut line)? == 0 {
-            break Ok(());
-        }
+        let line = match editor.readline("> ") {
+            Ok(s) => s,
+            Err(ReadlineError::Eof) => {
+                break Ok(());
+            },
+            Err(e) => break Err(e),
+        };
         let ast = match Parser::new(Lexer::new(&line, grammar)).parse() {
             Ok(expr) => expr,
             Err(e) => {
-                err.write(format!("Error: {}\n", e).as_bytes())?;
+                eprintln!("Error: {}", e);
                 continue;
             },
         };
-        output.write(format!("{}\n", ast.eval()).as_bytes())?;
+        println!("{}", ast.eval());
     }
 }
