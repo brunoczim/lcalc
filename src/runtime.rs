@@ -15,6 +15,7 @@ where
             },
             Err(e) => break Err(e),
         };
+        editor.add_history_entry(&line);
         let ast = match Parser::new(Lexer::new(&line, grammar)).parse() {
             Ok(expr) => expr,
             Err(e) => {
