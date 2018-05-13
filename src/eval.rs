@@ -59,7 +59,7 @@ impl Expr {
             },
             Lambda(ref arg, ref body) => {
                 if arg == name {
-                    val.clone()
+                    self.clone()
                 } else {
                     Lambda(arg.clone(), Box::new(body.replace(name, val)))
                 }
