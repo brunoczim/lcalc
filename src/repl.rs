@@ -41,6 +41,8 @@ pub fn help() -> &'static str {
         "REPL commands begin with :\n",
         ":help, :?                         shows this message\n",
         ":eval expr, :print expr, expr     evaluates expr and prints\n",
+        ":def IDENT expr                   defines IDENT as expr\n",
+        ":undef IDENT                      if defined, IDENT is removed\n",
         ":exit, :quit, EOF                 exits the REPL"
     )
 }
@@ -215,7 +217,11 @@ where
                         );
                         let tok = match lexer.next() {
                             Some(tok) => tok?,
-                            _ => return Err(Error::from(ParseError::PrematureEof)),
+                            _ => {
+                                return Err(Error::from(
+                                    ParseError::PrematureEof,
+                                ))
+                            },
                         };
                         if tok.kind != TokenKind::Ident {
                             return Err(Error::from(ParseError::BadToken(tok)));
@@ -233,7 +239,11 @@ where
                         );
                         let tok = match lexer.next() {
                             Some(tok) => tok?,
-                            _ => return Err(Error::from(ParseError::PrematureEof)),
+                            _ => {
+                                return Err(Error::from(
+                                    ParseError::PrematureEof,
+                                ))
+                            },
                         };
                         if tok.kind != TokenKind::Ident {
                             return Err(Error::from(ParseError::BadToken(tok)));

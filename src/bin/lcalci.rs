@@ -13,7 +13,7 @@ fn syntax_help() -> &'static str {
         "    Syntax for defining lambda:        \\identifer.expression",
         " or λidentifier.expression\n",
         "    Syntax for defining application:   expression expression\n",
-        "    Valid expressions:                 identifer or application ",
+        "    Valid expressions:                 identifer or application",
         " or lambda\n",
         "    Syntax for desambiguation:         (expression)\n",
         "    Valid identifiers:                 any character but .\\λ()",
