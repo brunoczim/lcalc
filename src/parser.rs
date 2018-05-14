@@ -6,17 +6,17 @@ pub type Result<'a, T> = ::std::result::Result<T, Error<'a>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error<'a> {
+    PrematureEof,
     BadChar(char),
     BadToken(Token<'a>),
-    PrematureEof(),
 }
 
 impl<'a> fmt::Display for Error<'a> {
     fn fmt(&self, fmtr: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Error::PrematureEof => write!(fmtr, "unexpected end of input"),
             Error::BadChar(ch) => write!(fmtr, "bad char `{}`", ch),
             Error::BadToken(tok) => write!(fmtr, "bad token {}", tok),
-            Error::PrematureEof() => write!(fmtr, "unexpected end of input"),
         }
     }
 }
@@ -33,7 +33,7 @@ where
 
 impl<'a, 'b, G> Lexer<'a, 'b, G>
 where
-    G: Grammar,
+    G: Grammar + 'b,
 {
     pub fn new(src: &'a str, grammar: &'b G) -> Self {
         Self {
@@ -149,7 +149,7 @@ where
         loop {
             let tok = match self.lexer.next() {
                 Some(res) => res,
-                _ => break expr.ok_or(Error::PrematureEof()),
+                _ => break expr.ok_or(Error::PrematureEof),
             }?;
             let other_expr = match tok.kind {
                 TokenKind::Lambda => {
@@ -181,7 +181,7 @@ where
     fn parse_lambda(&mut self, end: Option<TokenKind>) -> Result<'a, Expr> {
         let tok = match self.lexer.next() {
             Some(res) => res,
-            _ => return Err(Error::PrematureEof()),
+            _ => return Err(Error::PrematureEof),
         }?;
         if tok.kind != TokenKind::Ident {
             return Err(Error::BadToken(tok));
@@ -189,7 +189,7 @@ where
         let arg = tok.contents.into();
         let tok = match self.lexer.next() {
             Some(res) => res,
-            _ => return Err(Error::PrematureEof()),
+            _ => return Err(Error::PrematureEof),
         }?;
         if tok.kind != TokenKind::BodyDel {
             return Err(Error::BadToken(tok));

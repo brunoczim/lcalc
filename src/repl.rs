@@ -1,8 +1,8 @@
 use eval::Expr;
 use grammar::Grammar;
-use parser::{Error as ParseError, Lexer, Parser};
+use parser::{Error as ParseError, Lexer, Parser, TokenKind};
 use rustyline::{error::ReadlineError, Editor};
-use std::{collections::HashMap, fmt};
+use std::fmt;
 
 pub type Result = ::std::result::Result<Expr, Error>;
 
@@ -49,6 +49,8 @@ pub fn help() -> &'static str {
 enum Cmd {
     Eval,
     Print,
+    Def,
+    Undef,
     Exit,
     Quit,
     Help,
@@ -60,6 +62,8 @@ impl Cmd {
         match self {
             Cmd::Eval => "eval",
             Cmd::Print => "print",
+            Cmd::Def => "def",
+            Cmd::Undef => "undef",
             Cmd::Exit => "exit",
             Cmd::Quit => "quit",
             Cmd::Help => "help",
@@ -76,7 +80,7 @@ where
     G: Grammar,
 {
     grammar: G,
-    env: HashMap<String, Expr>,
+    env: Vec<(String, Expr)>,
     editor: Editor<()>,
 }
 
@@ -84,7 +88,7 @@ impl<G> Repl<G>
 where
     G: Grammar,
 {
-    pub fn new(grammar: G, env: HashMap<String, Expr>) -> Self {
+    pub fn new(grammar: G, env: Vec<(String, Expr)>) -> Self {
         Self {
             grammar,
             env,
@@ -92,8 +96,43 @@ where
         }
     }
 
-    pub fn eval(&mut self, src: &str) -> Result {
-        Ok(Parser::new(Lexer::new(src, &self.grammar)).parse()?.eval())
+    pub fn eval(&self, src: &str) -> Result {
+        let mut expr = Parser::new(Lexer::new(src, &self.grammar)).parse()?;
+        for (name, val) in self.env.iter().rev() {
+            expr.replace(name, val)
+        }
+        Ok(expr.eval())
+    }
+
+    pub fn define(&mut self, name: String, val: Expr) -> Result {
+        let prev = self.env
+            .iter()
+            .enumerate()
+            .find(|(_, elem)| elem.0 == name)
+            .map(|(i, _)| i);
+        match prev {
+            Some(i) => {
+                self.env.remove(i);
+            },
+            _ => (),
+        }
+        self.env.push((name, val));
+        Err(Error::NoReturn)
+    }
+
+    pub fn undef(&mut self, name: String) -> Result {
+        let prev = self.env
+            .iter()
+            .enumerate()
+            .find(|(_, elem)| elem.0 == name)
+            .map(|(i, _)| i);
+        match prev {
+            Some(i) => {
+                self.env.remove(i);
+            },
+            _ => (),
+        }
+        Err(Error::NoReturn)
     }
 
     pub fn dispatch_cmd(&mut self, line: &str) -> Result {
@@ -110,19 +149,24 @@ where
             }
             iter.next();
         }
+
         let keys = [
             Cmd::Eval.key(),
             Cmd::Print.key(),
+            Cmd::Def.key(),
+            Cmd::Undef.key(),
             Cmd::Exit.key(),
             Cmd::Quit.key(),
             Cmd::Help.key(),
             Cmd::Question.key(),
         ];
+
         let mut idx = None;
         'outer: for &(name, val) in keys.iter() {
             let mut eq = 0;
             let mut it1 = name.chars();
             let mut it2 = cmd.chars();
+
             loop {
                 match it1.next() {
                     Some(ch1) => match it2.next() {
@@ -144,6 +188,7 @@ where
                     },
                 }
             }
+
             match idx {
                 Some((_, i)) => if eq > i {
                     idx = Some((val, eq));
@@ -151,14 +196,56 @@ where
                 _ => idx = Some((val, eq)),
             }
         }
+
         match idx {
             Some((cmd, _)) => match cmd {
                 Cmd::Eval | Cmd::Print => {
                     self.eval(&line[iter.peek().unwrap().0..])
                 },
+
                 Cmd::Exit | Cmd::Quit => {
                     Err(Error::RlError(ReadlineError::Eof))
                 },
+
+                Cmd::Def => {
+                    let (name, val) = {
+                        let mut lexer = Lexer::new(
+                            &line[iter.peek().unwrap().0..],
+                            &self.grammar,
+                        );
+                        let tok = match lexer.next() {
+                            Some(tok) => tok?,
+                            _ => return Err(Error::from(ParseError::PrematureEof)),
+                        };
+                        if tok.kind != TokenKind::Ident {
+                            return Err(Error::from(ParseError::BadToken(tok)));
+                        }
+                        (tok.contents.into(), Parser::new(lexer).parse()?)
+                    };
+                    self.define(name, val)
+                },
+
+                Cmd::Undef => {
+                    let name = {
+                        let mut lexer = Lexer::new(
+                            &line[iter.peek().unwrap().0..],
+                            &self.grammar,
+                        );
+                        let tok = match lexer.next() {
+                            Some(tok) => tok?,
+                            _ => return Err(Error::from(ParseError::PrematureEof)),
+                        };
+                        if tok.kind != TokenKind::Ident {
+                            return Err(Error::from(ParseError::BadToken(tok)));
+                        }
+                        if let Some(res) = lexer.next() {
+                            return Err(Error::from(ParseError::BadToken(res?)));
+                        }
+                        tok.contents.into()
+                    };
+                    self.undef(name)
+                },
+
                 Cmd::Help | Cmd::Question => Err(Error::HelpRequested),
             },
             _ => Err(Error::BadCommand(cmd)),
@@ -180,11 +267,11 @@ where
 
     pub fn grammar_mut(&mut self) -> &mut Grammar { &mut self.grammar }
 
-    pub fn env(&self) -> &HashMap<String, Expr> { &self.env }
+    pub fn env(&self) -> &Vec<(String, Expr)> { &self.env }
 
-    pub fn env_mut(&mut self) -> &mut HashMap<String, Expr> { &mut self.env }
+    pub fn env_mut(&mut self) -> &mut Vec<(String, Expr)> { &mut self.env }
 
-    pub fn take(self) -> (G, HashMap<String, Expr>) {
+    pub fn take(self) -> (G, Vec<(String, Expr)>) {
         let Self {
             grammar,
             env,
