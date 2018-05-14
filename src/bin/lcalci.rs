@@ -3,7 +3,7 @@ extern crate rustyline;
 
 use lcalc::{
     grammar::Default,
-    runtime::{Error, Repl},
+    runtime::{Error, Repl, help},
 };
 use rustyline::error::ReadlineError;
 use std::{collections::HashMap, process::exit};
@@ -11,7 +11,7 @@ use std::{collections::HashMap, process::exit};
 fn main() {
     let mut repl = Repl::new(Default, HashMap::with_capacity(16));
     loop {
-        let err = match repl.round() {
+        let err = match repl.round("> ") {
             Ok(expr) => {
                 println!("{}", expr);
                 continue;
@@ -28,8 +28,10 @@ fn main() {
                 },
             },
             Error::ParseError(_) | Error::BadCommand(_) => {
-                eprintln!("{}", err)
+                eprintln!("{}", err);
+                eprintln!("Type :? or :help for help");
             },
+            Error::HelpRequested => eprintln!("{}", help()),
             Error::NoReturn => (),
         }
     }

@@ -12,6 +12,7 @@ pub enum Error {
     RlError(ReadlineError),
     ParseError(String),
     BadCommand(String),
+    HelpRequested,
 }
 
 impl fmt::Display for Error {
@@ -21,6 +22,7 @@ impl fmt::Display for Error {
             Error::RlError(ref e) => write!(fmtr, "readline error: {}", e),
             Error::ParseError(ref e) => write!(fmtr, "parse error: {}", e),
             Error::BadCommand(ref e) => write!(fmtr, "bad command: {}", e),
+            Error::HelpRequested => write!(fmtr, "help requested"),
         }
     }
 }
@@ -33,12 +35,24 @@ impl From<ReadlineError> for Error {
     fn from(e: ReadlineError) -> Self { Error::RlError(e) }
 }
 
+pub fn help() -> &'static str {
+    concat!(
+        "This is a lambda calculator REPL.",
+        "REPL commands begin with :\n",
+        ":help, :?                         shows this message\n",
+        ":eval expr, :print expr, expr     evaluates expr and prints\n",
+        ":exit, :quit, EOF                 exits the REPL"
+    )
+}
+
 #[derive(Clone, Debug, Copy)]
 enum Cmd {
     Eval,
     Print,
     Exit,
     Quit,
+    Help,
+    Question,
 }
 
 impl Cmd {
@@ -48,6 +62,8 @@ impl Cmd {
             Cmd::Print => "print",
             Cmd::Exit => "exit",
             Cmd::Quit => "quit",
+            Cmd::Help => "help",
+            Cmd::Question => "?",
         }
     }
 
@@ -85,7 +101,7 @@ where
         let mut cmd = String::new();
         loop {
             match iter.peek() {
-                Some((_, ch)) => if ch.is_alphabetic() {
+                Some(&(_, ch)) => if ch.is_alphabetic() || ch == '?' {
                     cmd.push(ch.to_ascii_lowercase());
                 } else {
                     break;
@@ -99,6 +115,8 @@ where
             Cmd::Print.key(),
             Cmd::Exit.key(),
             Cmd::Quit.key(),
+            Cmd::Help.key(),
+            Cmd::Question.key(),
         ];
         let mut idx = None;
         'outer: for &(name, val) in keys.iter() {
@@ -113,7 +131,11 @@ where
                         } else {
                             continue 'outer;
                         },
-                        _ => break,
+                        _ => if eq == 0 {
+                            continue 'outer;
+                        } else {
+                            break;
+                        },
                     },
                     _ => if it2.next().is_none() {
                         break;
@@ -137,13 +159,14 @@ where
                 Cmd::Exit | Cmd::Quit => {
                     Err(Error::RlError(ReadlineError::Eof))
                 },
+                Cmd::Help | Cmd::Question => Err(Error::HelpRequested),
             },
             _ => Err(Error::BadCommand(cmd)),
         }
     }
 
-    pub fn round(&mut self) -> Result {
-        let line = self.editor.readline("> ")?;
+    pub fn round(&mut self, prompt: &str) -> Result {
+        let line = self.editor.readline(prompt)?;
         self.editor.add_history_entry(&line);
         let trimmed = line.trim();
         match trimmed.chars().next() {
