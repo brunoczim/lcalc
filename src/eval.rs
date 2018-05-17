@@ -12,12 +12,12 @@ impl fmt::Display for Symbol {
     fn fmt(&self, fmtr: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Dyn(s) => fmtr.write_str(s),
-            Static(s) => fmtr.write_str(s),
+            Static(s) => write!(fmtr, "{}", s),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Expr {
     Var(Symbol),
     App(Box<Expr>, Box<Expr>),
@@ -96,10 +96,10 @@ impl Expr {
             match refer {
                 Var(sym) => match sym {
                     Dyn(s) => if &**s == &**name {
-                        *refer = val.clone()
+                        *refer = val.clone();
                     },
                     Static(s) => if Rc::ptr_eq(s, name) {
-                        *refer = val.clone()
+                        *refer = val.clone();
                     },
                 },
                 App(ref mut fun, ref mut arg) => {
@@ -112,6 +112,69 @@ impl Expr {
                 },
             }
         }
+    }
+}
+
+impl Clone for Expr {
+    fn clone(&self) -> Self {
+        enum Op<'a> {
+            Clone(&'a Expr),
+            Apply,
+            Lambda(&'a Rc<str>, Rc<str>),
+        }
+        let mut dests = Vec::with_capacity(16);
+        let mut ops = Vec::with_capacity(16);
+        ops.push(Op::Clone(self));
+
+        while let Some(op) = ops.pop() {
+            match op {
+                Op::Clone(e) => match e {
+                    Var(sym) => dests.push(Var(match sym {
+                        Dyn(s) => Dyn(s.clone()),
+                        Static(s) => {
+                            let lambda = ops.iter()
+                                .filter_map(|x| match x {
+                                    Op::Lambda(orig, clone) => {
+                                        Some((*orig, clone))
+                                    },
+                                    _ => None,
+                                })
+                                .find(|(orig, _)| Rc::ptr_eq(orig, s));
+                            match lambda {
+                                Some((_, rc)) => Static(rc.clone()),
+                                _ => Static(s.clone()),
+                            }
+                        },
+                    })),
+
+                    App(fun, arg) => {
+                        ops.push(Op::Apply);
+                        ops.push(Op::Clone(fun));
+                        ops.push(Op::Clone(arg));
+                    },
+
+                    Lambda(arg, body) => {
+                        ops.push(Op::Lambda(arg, (&**arg).into()));
+                        ops.push(Op::Clone(&**body));
+                    },
+                },
+
+                Op::Apply => {
+                    let fun = dests.pop().unwrap();
+                    let arg = dests.pop().unwrap();
+                    dests.push(App(Box::new(fun), Box::new(arg)));
+                },
+
+                Op::Lambda(_, arg) => {
+                    let body = dests.pop().unwrap();
+                    dests.push(Lambda(arg, Box::new(body)));
+                },
+            }
+        }
+
+        let res = dests.pop().unwrap();
+        debug_assert_eq!(dests.len(), 0);
+        res
     }
 }
 
