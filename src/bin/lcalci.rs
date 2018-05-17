@@ -3,10 +3,10 @@ extern crate rustyline;
 
 use lcalc::{
     grammar::Default,
-    repl::{help, Error, Repl},
+    repl::{help, Error, Repl, Result},
 };
 use rustyline::error::ReadlineError;
-use std::process::exit;
+use std::{env::args, process::exit};
 
 fn syntax_help() -> &'static str {
     concat!(
@@ -21,34 +21,44 @@ fn syntax_help() -> &'static str {
     )
 }
 
+fn use_result(res: Result) -> bool {
+    let err = match res {
+        Ok(expr) => {
+            println!("{}", expr);
+            return true;
+        },
+        Err(e) => e,
+    };
+    match err {
+        Error::RlError(ref e) => match e {
+            ReadlineError::Interrupted => (),
+            ReadlineError::Eof => return false,
+            _ => {
+                eprintln!("{}", err);
+                exit(-1);
+            },
+        },
+        Error::ParseError(_)
+        | Error::IOError(_)
+        | Error::BadCommand(_) => {
+            eprintln!("{}", err);
+            eprintln!("Type :? or :help for help");
+        },
+        Error::HelpRequested => {
+            eprintln!("{}", help());
+            eprintln!("{}", syntax_help());
+        },
+        Error::NoReturn => (),
+    }
+    return true;
+}
+
 fn main() {
     let mut repl = Repl::new(Default, Vec::with_capacity(16));
-    loop {
-        let err = match repl.round("> ") {
-            Ok(expr) => {
-                println!("{}", expr);
-                continue;
-            },
-            Err(e) => e,
-        };
-        match err {
-            Error::RlError(ref e) => match e {
-                ReadlineError::Interrupted => (),
-                ReadlineError::Eof => break,
-                _ => {
-                    eprintln!("{}", err);
-                    exit(-1);
-                },
-            },
-            Error::ParseError(_) | Error::BadCommand(_) => {
-                eprintln!("{}", err);
-                eprintln!("Type :? or :help for help");
-            },
-            Error::HelpRequested => {
-                eprintln!("{}", help());
-                eprintln!("{}", syntax_help());
-            },
-            Error::NoReturn => (),
-        }
+    let mut args = args();
+    args.next(); // ignore executable name
+    for file in args {
+        use_result(repl.load(&file));
     }
+    while use_result(repl.prompt("> ")) {}
 }

@@ -1,2 +1,2 @@
 # lcalc
-Lambda Calculus Evaluator Written in Rust (and partially functional!)
+Lambda Calculus Evaluator Written in Rust!

@@ -1,8 +1,13 @@
 use eval::Expr;
 use grammar::Grammar;
-use parser::{Error as ParseError, Lexer, Parser, TokenKind};
+use parser::{Error as ParseError, Lexer, TokenKind};
 use rustyline::{error::ReadlineError, Editor};
-use std::fmt;
+use std::{
+    fmt,
+    fs::File,
+    io::{BufRead, BufReader, Error as IOError},
+    rc::Rc,
+};
 
 pub type Result = ::std::result::Result<Expr, Error>;
 
@@ -11,6 +16,7 @@ pub enum Error {
     NoReturn,
     RlError(ReadlineError),
     ParseError(String),
+    IOError(IOError),
     BadCommand(String),
     HelpRequested,
 }
@@ -22,6 +28,7 @@ impl fmt::Display for Error {
             Error::RlError(ref e) => write!(fmtr, "readline error: {}", e),
             Error::ParseError(ref e) => write!(fmtr, "parse error: {}", e),
             Error::BadCommand(ref e) => write!(fmtr, "bad command: {}", e),
+            Error::IOError(ref e) => write!(fmtr, "IO error: {}", e),
             Error::HelpRequested => write!(fmtr, "help requested"),
         }
     }
@@ -35,6 +42,10 @@ impl From<ReadlineError> for Error {
     fn from(e: ReadlineError) -> Self { Error::RlError(e) }
 }
 
+impl From<IOError> for Error {
+    fn from(e: IOError) -> Self { Error::IOError(e) }
+}
+
 pub fn help() -> &'static str {
     concat!(
         "This is a lambda calculator REPL.",
@@ -43,6 +54,8 @@ pub fn help() -> &'static str {
         ":eval expr, :print expr, expr     evaluates expr and prints\n",
         ":def IDENT expr                   defines IDENT as expr\n",
         ":undef IDENT                      if defined, IDENT is removed\n",
+        ":load PATH                        evaluates commands from a file",
+        " and prints the lval result\n",
         ":exit, :quit, EOF                 exits the REPL"
     )
 }
@@ -53,6 +66,7 @@ enum Cmd {
     Print,
     Def,
     Undef,
+    Load,
     Exit,
     Quit,
     Help,
@@ -66,6 +80,7 @@ impl Cmd {
             Cmd::Print => "print",
             Cmd::Def => "def",
             Cmd::Undef => "undef",
+            Cmd::Load => "load",
             Cmd::Exit => "exit",
             Cmd::Quit => "quit",
             Cmd::Help => "help",
@@ -82,7 +97,7 @@ where
     G: Grammar,
 {
     grammar: G,
-    env: Vec<(String, Expr)>,
+    env: Vec<(Rc<str>, Expr)>,
     editor: Editor<()>,
 }
 
@@ -90,7 +105,7 @@ impl<G> Repl<G>
 where
     G: Grammar,
 {
-    pub fn new(grammar: G, env: Vec<(String, Expr)>) -> Self {
+    pub fn new(grammar: G, env: Vec<(Rc<str>, Expr)>) -> Self {
         Self {
             grammar,
             env,
@@ -99,14 +114,14 @@ where
     }
 
     pub fn eval(&self, src: &str) -> Result {
-        let mut expr = Parser::new(Lexer::new(src, &self.grammar)).parse()?;
+        let mut expr = Lexer::new(src, &self.grammar).parse()?;
         for (name, val) in self.env.iter().rev() {
-            expr.replace(name, val)
+            expr.replace(name, val);
         }
         Ok(expr.eval())
     }
 
-    pub fn define(&mut self, name: String, val: Expr) -> Result {
+    pub fn define(&mut self, name: Rc<str>, val: Expr) -> Result {
         let prev = self.env
             .iter()
             .enumerate()
@@ -122,7 +137,7 @@ where
         Err(Error::NoReturn)
     }
 
-    pub fn undef(&mut self, name: String) -> Result {
+    pub fn undef(&mut self, name: Rc<str>) -> Result {
         let prev = self.env
             .iter()
             .enumerate()
@@ -135,6 +150,20 @@ where
             _ => (),
         }
         Err(Error::NoReturn)
+    }
+
+    pub fn load(&mut self, path: &str) -> Result {
+        let mut expr = None;
+        let reader = BufReader::new(File::open(path)?);
+        for line in reader.lines() {
+            let arg = &line?;
+            match self.for_line(arg) {
+                Ok(e) => expr = Some(e),
+                Err(Error::NoReturn) => (),
+                err => return err,
+            }
+        }
+        expr.ok_or(Error::NoReturn)
     }
 
     pub fn dispatch_cmd(&mut self, line: &str) -> Result {
@@ -157,6 +186,7 @@ where
             Cmd::Print.key(),
             Cmd::Def.key(),
             Cmd::Undef.key(),
+            Cmd::Load.key(),
             Cmd::Exit.key(),
             Cmd::Quit.key(),
             Cmd::Help.key(),
@@ -226,7 +256,7 @@ where
                         if tok.kind != TokenKind::Ident {
                             return Err(Error::from(ParseError::BadToken(tok)));
                         }
-                        (tok.contents.into(), Parser::new(lexer).parse()?)
+                        (tok.contents.into(), lexer.parse()?)
                     };
                     self.define(name, val)
                 },
@@ -256,14 +286,19 @@ where
                     self.undef(name)
                 },
 
+                Cmd::Load => self.load({
+                    iter.next();
+                    let idx = iter.peek().map_or(line.len(), |(i, _)| *i);
+                    &line[idx..]
+                }),
+
                 Cmd::Help | Cmd::Question => Err(Error::HelpRequested),
             },
             _ => Err(Error::BadCommand(cmd)),
         }
     }
 
-    pub fn round(&mut self, prompt: &str) -> Result {
-        let line = self.editor.readline(prompt)?;
+    pub fn for_line(&mut self, line: &str) -> Result {
         self.editor.add_history_entry(&line);
         let trimmed = line.trim();
         match trimmed.chars().next() {
@@ -273,15 +308,20 @@ where
         }
     }
 
+    pub fn prompt(&mut self, prompt: &str) -> Result {
+        let line = self.editor.readline(prompt)?;
+        self.for_line(&line)
+    }
+
     pub fn grammar(&self) -> &Grammar { &self.grammar }
 
     pub fn grammar_mut(&mut self) -> &mut Grammar { &mut self.grammar }
 
-    pub fn env(&self) -> &Vec<(String, Expr)> { &self.env }
+    pub fn env(&self) -> &Vec<(Rc<str>, Expr)> { &self.env }
 
-    pub fn env_mut(&mut self) -> &mut Vec<(String, Expr)> { &mut self.env }
+    pub fn env_mut(&mut self) -> &mut Vec<(Rc<str>, Expr)> { &mut self.env }
 
-    pub fn take(self) -> (G, Vec<(String, Expr)>) {
+    pub fn take(self) -> (G, Vec<(Rc<str>, Expr)>) {
         let Self {
             grammar,
             env,
