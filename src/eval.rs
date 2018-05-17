@@ -107,10 +107,8 @@ impl Expr {
                     stack.push(fun);
                     stack.push(arg);
                 },
-                Lambda(ref s, ref mut body) => {
-                    if s != name {
-                        stack.push(body);
-                    }
+                Lambda(_, ref mut body) => {
+                    stack.push(body);
                 },
             }
         }
