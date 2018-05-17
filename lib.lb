@@ -1,0 +1,25 @@
+:comment natural numbers
+:def 0 \f.\x.x
+:def 1 \f.\x.f x
+:def 2 \f.\x.f (f x)
+:def 3 \f.\x.f (f (f x))
+:def 4 \f.\x.f (f (f (f x)))
+:def + \m.\n.\f.\x.m f (n f x)
+:def 5 + 4 1
+:def 6 + 5 1
+:def 7 + 6 1
+:def 8 + 7 1
+:def 9 + 8 1
+:def 10 + 9 1
+:def * \m.\ n.m (+ n) 0
+:def ^ \m.\n    .n (* m) 1
+
+:comment booleans
+:def TRUE \t.\f.t
+:def FALSE \t.\f.f
+:def ~ \a.a FALSE TRUE
+:def & \a.\b.a b a
+:def | \a.\b.a a b
+
+:comment natural predicates
+:def IS-0 \n.n (\a.FALSE) TRUE

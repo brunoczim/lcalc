@@ -67,6 +67,7 @@ enum Cmd {
     Def,
     Undef,
     Load,
+    Comment,
     Exit,
     Quit,
     Help,
@@ -81,6 +82,7 @@ impl Cmd {
             Cmd::Def => "def",
             Cmd::Undef => "undef",
             Cmd::Load => "load",
+            Cmd::Comment => "comment",
             Cmd::Exit => "exit",
             Cmd::Quit => "quit",
             Cmd::Help => "help",
@@ -187,6 +189,7 @@ where
             Cmd::Def.key(),
             Cmd::Undef.key(),
             Cmd::Load.key(),
+            Cmd::Comment.key(),
             Cmd::Exit.key(),
             Cmd::Quit.key(),
             Cmd::Help.key(),
@@ -291,6 +294,8 @@ where
                     let idx = iter.peek().map_or(line.len(), |(i, _)| *i);
                     &line[idx..]
                 }),
+
+                Cmd::Comment => Err(Error::NoReturn),
 
                 Cmd::Help | Cmd::Question => Err(Error::HelpRequested),
             },
