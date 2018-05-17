@@ -38,14 +38,16 @@ fn use_result(res: Result) -> bool {
                 exit(-1);
             },
         },
-        Error::ParseError(_)
-        | Error::IOError(_)
-        | Error::BadCommand(_) => {
+        Error::ParseError(_) | Error::IOError(_) | Error::BadCommand(_) => {
             eprintln!("{}", err);
             eprintln!("Type :? or :help for help");
         },
         Error::HelpRequested => {
             eprintln!("{}", help());
+            eprintln!(
+                "Note that you may pass files to be loaded as process \
+                 arguments"
+            );
             eprintln!("{}", syntax_help());
         },
         Error::NoReturn => (),
