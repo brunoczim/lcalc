@@ -86,124 +86,32 @@ where
         }
     }
 
-    // FIXME: this function is too big.
-    pub fn parse(&mut self) -> Result<'a, Expr> {
-        #[derive(Debug, Clone)]
-        enum Frame {
-            Empty,
-            AppArg(Expr),
-            AppFun(Expr),
-            Lambda(Rc<str>),
-        }
-
-        let mut frames = Vec::with_capacity(16);
-        let mut level = 0;
-        let mut last_expr = None;
-        let mut last_end = None;
-
-        frames.push(Frame::Empty);
-
-        while let Some(frame) = frames.pop() {
-            match frame {
-                Frame::Empty => (),
-                Frame::AppArg(other) => {
-                    last_expr = Some(match last_expr {
-                        Some(e) => App(Box::new(e), Box::new(other)),
-                        _ => other,
-                    });
-                },
-                Frame::AppFun(other) => {
-                    last_expr = Some(match last_expr {
-                        Some(e) => App(Box::new(other), Box::new(e)),
-                        _ => other,
-                    });
-                },
-                Frame::Lambda(s) => match last_expr {
-                    Some(e) => {
-                        last_expr = Some(Lambda(s, Box::new(e)));
-                        continue;
-                    },
-                    _ => return Err(last_end.into()),
-                },
-            }
-
-            let tok = match self.next() {
-                Some(res) => res,
-                _ => if level > 0 {
-                    return Err(Error::PrematureEof);
+    fn expect(&mut self, kind: TokenKind) -> Result<'a, Token<'a>> {
+        match self.next() {
+            Some(res) => {
+                let tok = res?;
+                if tok.kind != kind {
+                    Err(Error::BadToken(tok))
                 } else {
-                    continue;
-                },
-            }?;
-
-            match tok.kind {
-                TokenKind::Lambda => {
-                    if last_expr.is_none() {
-                        let tok = match self.next() {
-                            Some(res) => res,
-                            _ => return Err(Error::PrematureEof),
-                        }?;
-                        if tok.kind != TokenKind::Ident {
-                            return Err(Error::BadToken(tok));
-                        }
-                        let arg = tok.contents.into();
-                        let tok = match self.next() {
-                            Some(res) => res,
-                            _ => return Err(Error::PrematureEof),
-                        }?;
-                        if tok.kind != TokenKind::BodyDel {
-                            return Err(Error::BadToken(tok));
-                        }
-                        frames.push(Frame::Lambda(arg));
-                        frames.push(Frame::Empty);
-                    } else {
-                        return Err(Error::BadToken(tok));
-                    }
-                },
-
-                TokenKind::OpenParen => {
-                    match last_expr {
-                        Some(expr) => {
-                            frames.push(Frame::AppFun(expr));
-                        },
-                        _ => frames.push(Frame::Empty),
-                    }
-                    level += 1;
-                    last_expr = None;
-                    frames.push(Frame::Empty);
-                },
-
-                TokenKind::Ident => {
-                    let expr = {
-                        let lambda = frames
-                            .iter()
-                            .rev()
-                            .filter_map(|frame| match frame {
-                                Frame::Lambda(s) => Some(s),
-                                _ => None,
-                            })
-                            .find(|s| &***s == tok.contents);
-                        Var(match lambda {
-                            Some(rc) => Static(rc.clone()),
-                            _ => Dyn(tok.contents.into()),
-                        })
-                    };
-                    frames.push(Frame::AppArg(expr));
-                },
-
-                _ => {
-                    if level > 0 && tok.kind == TokenKind::CloseParen {
-                        last_end = Some(tok);
-                        level -= 1;
-                    } else {
-                        return Err(Error::BadToken(tok));
-                    }
-                },
-            }
+                    Ok(tok)
+                }
+            },
+            _ => Err(Error::PrematureEof),
         }
+    }
 
-        debug_assert_eq!(level, 0);
-        last_expr.ok_or(Error::PrematureEof)
+    pub fn parse(&mut self) -> Result<'a, Expr> {
+        let mut parser = Parser {
+            lexer: self,
+            frames: Vec::with_capacity(16),
+            level: 0,
+            last_expr: None,
+            last_end: None,
+        };
+        parser.frames.push(Frame::Empty);
+        parser.run()?;
+        debug_assert_eq!(parser.level, 0);
+        parser.last_expr.ok_or(Error::PrematureEof)
     }
 }
 
@@ -250,5 +158,140 @@ where
             }
         }
         Some(Err(Error::BadChar(self.iter.peek().unwrap().1)))
+    }
+}
+
+#[derive(Debug, Clone)]
+enum Frame {
+    Empty,
+    AppArg(Expr),
+    AppFun(Expr),
+    Lambda(Rc<str>),
+}
+
+#[derive(Debug)]
+struct Parser<'a, 'b, 'c, G>
+where
+    'a: 'c,
+    'b: 'c,
+    G: Grammar + 'b,
+{
+    lexer: &'c mut Lexer<'a, 'b, G>,
+    level: usize,
+    last_expr: Option<Expr>,
+    last_end: Option<Token<'a>>,
+    frames: Vec<Frame>,
+}
+
+impl<'a, 'b, 'c, G> Parser<'a, 'b, 'c, G>
+where
+    'a: 'c,
+    'b: 'c,
+    G: Grammar + 'b,
+{
+    fn run(&mut self) -> Result<'a, ()> {
+        while let Some(frame) = self.frames.pop() {
+            match frame {
+                Frame::Empty => self.empty()?,
+                Frame::AppArg(other) => self.app_arg(other)?,
+                Frame::AppFun(other) => self.app_fun(other)?,
+                Frame::Lambda(s) => self.lambda(s)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn empty(&mut self) -> Result<'a, ()> {
+        let tok = match self.lexer.next() {
+            Some(res) => res,
+            _ => {
+                return if self.level > 0 {
+                    Err(Error::PrematureEof)
+                } else {
+                    Ok(())
+                }
+            },
+        }?;
+
+        match tok.kind {
+            TokenKind::Lambda => {
+                if self.last_expr.is_none() {
+                    let tok = self.lexer.expect(TokenKind::Ident)?;
+                    self.lexer.expect(TokenKind::BodyDel)?;
+                    self.frames.push(Frame::Lambda(tok.contents.into()));
+                    self.frames.push(Frame::Empty);
+                    Ok(())
+                } else {
+                    Err(Error::BadToken(tok))
+                }
+            },
+
+            TokenKind::OpenParen => {
+                match self.last_expr.take() {
+                    Some(expr) => {
+                        self.frames.push(Frame::AppFun(expr));
+                    },
+                    _ => self.frames.push(Frame::Empty),
+                }
+                self.level += 1;
+                self.frames.push(Frame::Empty);
+                Ok(())
+            },
+
+            TokenKind::Ident => {
+                let expr = {
+                    let lambda = self.frames
+                        .iter()
+                        .rev()
+                        .filter_map(|frame| match frame {
+                            Frame::Lambda(s) => Some(s),
+                            _ => None,
+                        })
+                        .find(|s| &***s == tok.contents);
+                    Var(match lambda {
+                        Some(rc) => Static(rc.clone()),
+                        _ => Dyn(tok.contents.into()),
+                    })
+                };
+                self.frames.push(Frame::AppArg(expr));
+                Ok(())
+            },
+
+            _ => {
+                if self.level > 0 && tok.kind == TokenKind::CloseParen {
+                    self.last_end = Some(tok);
+                    self.level -= 1;
+                    Ok(())
+                } else {
+                    Err(Error::BadToken(tok))
+                }
+            },
+        }
+    }
+
+    fn app_arg(&mut self, other: Expr) -> Result<'a, ()> {
+        self.last_expr = Some(match self.last_expr.take() {
+            Some(e) => App(Box::new(e), Box::new(other)),
+            _ => other,
+        });
+        self.empty()
+    }
+
+    fn app_fun(&mut self, other: Expr) -> Result<'a, ()> {
+        self.last_expr = Some(match self.last_expr.take() {
+            Some(e) => App(Box::new(other), Box::new(e)),
+            _ => other,
+        });
+        self.empty()
+    }
+
+    fn lambda(&mut self, arg: Rc<str>) -> Result<'a, ()> {
+        match self.last_expr.take() {
+            Some(e) => {
+                self.last_expr = Some(Lambda(arg, Box::new(e)));
+                Ok(())
+            },
+            _ => Err(self.last_end.into()),
+        }
     }
 }
