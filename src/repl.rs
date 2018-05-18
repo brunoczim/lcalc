@@ -1,8 +1,14 @@
 use eval::Expr;
 use grammar::Grammar;
 use parser::{Error as ParseError, Lexer, TokenKind};
-use rustyline::{error::ReadlineError, Editor};
+use rustyline::{
+    completion::Completer as CompleterTrait,
+    error::ReadlineError,
+    Editor,
+    Result as RlResult,
+};
 use std::{
+    cmp::Ordering,
     fmt,
     fs::File,
     io::{BufRead, BufReader, Error as IOError},
@@ -55,9 +61,33 @@ pub fn help() -> &'static str {
         ":def IDENT expr                   defines IDENT as expr\n",
         ":undef IDENT                      if defined, IDENT is removed\n",
         ":load PATH                        evaluates commands from a file",
+        ":comment ...                      ignored\n",
         " and prints the lval result\n",
         ":exit, :quit, EOF                 exits the REPL"
     )
+}
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
+struct Completer;
+
+impl CompleterTrait for Completer {
+    fn complete(
+        &self,
+        line: &str,
+        _pos: usize,
+    ) -> RlResult<(usize, Vec<String>)> {
+        let trimmed = line.trim();
+        let offset = line.len() - trimmed.len();
+        if let Some((name, _rem)) = Cmd::parse_name(trimmed) {
+            let cmds = Cmd::from_partial_name(&name);
+            Ok((
+                offset,
+                cmds.iter().map(|x| String::from(":") + x.name()).collect(),
+            ))
+        } else {
+            Ok((offset, Vec::new()))
+        }
+    }
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -91,6 +121,83 @@ impl Cmd {
     }
 
     fn key(self) -> (&'static str, Self) { (self.name(), self) }
+
+    fn parse_name(line: &str) -> Option<(String, &str)> {
+        let mut iter = line.trim().char_indices().peekable();
+        match iter.peek() {
+            Some((_, ':')) => {
+                let mut cmd = String::new();
+                iter.next();
+                let idx = loop {
+                    match iter.peek() {
+                        Some(&(i, ch)) => if ch.is_alphabetic() || ch == '?' {
+                            cmd.push(ch.to_ascii_lowercase());
+                        } else {
+                            break Some(i);
+                        },
+                        _ => break None,
+                    }
+                    iter.next();
+                };
+                Some((cmd, line[idx.unwrap_or(line.len())..].trim()))
+            },
+            Some(_) => Some(("eval".into(), line)),
+            _ => None,
+        }
+    }
+
+    fn from_partial_name(name: &str) -> Vec<Self> {
+        let keys = [
+            Cmd::Eval.key(),
+            Cmd::Print.key(),
+            Cmd::Def.key(),
+            Cmd::Undef.key(),
+            Cmd::Load.key(),
+            Cmd::Comment.key(),
+            Cmd::Exit.key(),
+            Cmd::Quit.key(),
+            Cmd::Help.key(),
+            Cmd::Question.key(),
+        ];
+
+        let mut idx = 0;
+        let mut cmds = Vec::new();
+        'outer: for &(cmd_name, val) in keys.iter() {
+            let mut eq = 0;
+            let mut it1 = cmd_name.chars();
+            let mut it2 = name.chars();
+
+            loop {
+                match it1.next() {
+                    Some(ch1) => match it2.next() {
+                        Some(ch2) => if ch1 == ch2 {
+                            eq += 1;
+                        } else {
+                            continue 'outer;
+                        },
+                        _ => break,
+                    },
+                    _ => if it2.next().is_none() {
+                        break;
+                    } else {
+                        continue 'outer;
+                    },
+                }
+            }
+
+            match eq.cmp(&idx) {
+                Ordering::Greater => {
+                    idx = eq;
+                    cmds = vec![val];
+                },
+                Ordering::Equal => {
+                    cmds.push(val);
+                },
+                _ => (),
+            }
+        }
+        cmds
+    }
 }
 
 #[derive(Debug)]
@@ -100,7 +207,7 @@ where
 {
     grammar: G,
     env: Vec<(Rc<str>, Expr)>,
-    editor: Editor<()>,
+    editor: Editor<Completer>,
 }
 
 impl<G> Repl<G>
@@ -108,11 +215,13 @@ where
     G: Grammar,
 {
     pub fn new(grammar: G, env: Vec<(Rc<str>, Expr)>) -> Self {
-        Self {
+        let mut this = Self {
             grammar,
             env,
             editor: Editor::new(),
-        }
+        };
+        this.editor.set_completer(Some(Completer));
+        this
     }
 
     pub fn eval(&self, src: &str) -> Result {
@@ -124,7 +233,8 @@ where
     }
 
     pub fn define(&mut self, name: Rc<str>, val: Expr) -> Result {
-        let prev = self.env
+        let prev = self
+            .env
             .iter()
             .enumerate()
             .find(|(_, elem)| elem.0 == name)
@@ -140,7 +250,8 @@ where
     }
 
     pub fn undef(&mut self, name: Rc<str>) -> Result {
-        let prev = self.env
+        let prev = self
+            .env
             .iter()
             .enumerate()
             .find(|(_, elem)| elem.0 == name)
@@ -168,75 +279,16 @@ where
         expr.ok_or(Error::NoReturn)
     }
 
-    pub fn dispatch_cmd(&mut self, line: &str) -> Result {
-        let mut iter = line.char_indices().peekable();
-        let mut cmd = String::new();
-        loop {
-            match iter.peek() {
-                Some(&(_, ch)) => if ch.is_alphabetic() || ch == '?' {
-                    cmd.push(ch.to_ascii_lowercase());
-                } else {
-                    break;
-                },
-                _ => break,
-            }
-            iter.next();
-        }
-
-        let keys = [
-            Cmd::Eval.key(),
-            Cmd::Print.key(),
-            Cmd::Def.key(),
-            Cmd::Undef.key(),
-            Cmd::Load.key(),
-            Cmd::Comment.key(),
-            Cmd::Exit.key(),
-            Cmd::Quit.key(),
-            Cmd::Help.key(),
-            Cmd::Question.key(),
-        ];
-
-        let mut idx = None;
-        'outer: for &(name, val) in keys.iter() {
-            let mut eq = 0;
-            let mut it1 = name.chars();
-            let mut it2 = cmd.chars();
-
-            loop {
-                match it1.next() {
-                    Some(ch1) => match it2.next() {
-                        Some(ch2) => if ch1 == ch2 {
-                            eq += 1;
-                        } else {
-                            continue 'outer;
-                        },
-                        _ => if eq == 0 {
-                            continue 'outer;
-                        } else {
-                            break;
-                        },
-                    },
-                    _ => if it2.next().is_none() {
-                        break;
-                    } else {
-                        continue 'outer;
-                    },
-                }
-            }
-
-            match idx {
-                Some((_, i)) => if eq > i {
-                    idx = Some((val, eq));
-                },
-                _ => idx = Some((val, eq)),
-            }
-        }
-
-        match idx {
-            Some((cmd, _)) => match cmd {
-                Cmd::Eval | Cmd::Print => {
-                    self.eval(&line[iter.peek().unwrap().0..])
-                },
+    pub fn for_line(&mut self, line: &str) -> Result {
+        self.editor.add_history_entry(&line);
+        let (name, line) = match Cmd::parse_name(line.trim()) {
+            Some(x) => x,
+            _ => return Err(Error::NoReturn),
+        };
+        let cmds = Cmd::from_partial_name(&name);
+        match (cmds.get(0), cmds.len()) {
+            (Some(cmd), 1) => match cmd {
+                Cmd::Eval | Cmd::Print => self.eval(line),
 
                 Cmd::Exit | Cmd::Quit => {
                     Err(Error::RlError(ReadlineError::Eof))
@@ -244,10 +296,7 @@ where
 
                 Cmd::Def => {
                     let (name, val) = {
-                        let mut lexer = Lexer::new(
-                            &line[iter.peek().unwrap().0..],
-                            &self.grammar,
-                        );
+                        let mut lexer = Lexer::new(line, &self.grammar);
                         let tok = match lexer.next() {
                             Some(tok) => tok?,
                             _ => {
@@ -266,10 +315,7 @@ where
 
                 Cmd::Undef => {
                     let name = {
-                        let mut lexer = Lexer::new(
-                            &line[iter.peek().unwrap().0..],
-                            &self.grammar,
-                        );
+                        let mut lexer = Lexer::new(line, &self.grammar);
                         let tok = match lexer.next() {
                             Some(tok) => tok?,
                             _ => {
@@ -289,27 +335,13 @@ where
                     self.undef(name)
                 },
 
-                Cmd::Load => self.load({
-                    iter.next();
-                    let idx = iter.peek().map_or(line.len(), |(i, _)| *i);
-                    &line[idx..]
-                }),
+                Cmd::Load => self.load(line.trim()),
 
                 Cmd::Comment => Err(Error::NoReturn),
 
                 Cmd::Help | Cmd::Question => Err(Error::HelpRequested),
             },
-            _ => Err(Error::BadCommand(cmd)),
-        }
-    }
-
-    pub fn for_line(&mut self, line: &str) -> Result {
-        self.editor.add_history_entry(&line);
-        let trimmed = line.trim();
-        match trimmed.chars().next() {
-            Some(':') => self.dispatch_cmd(&trimmed[1..]),
-            Some(_) => self.eval(trimmed),
-            None => Err(Error::NoReturn),
+            _ => Err(Error::BadCommand(name)),
         }
     }
 
