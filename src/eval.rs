@@ -29,53 +29,60 @@ impl Expr {
         #[derive(Debug, Clone)]
         enum Op {
             Eval,
-            Swap,
-            Apply,
+            Apply(Expr),
+            ApplyTo(Expr),
             Lambda(Rc<str>),
         }
-
         let mut ops = Vec::with_capacity(16);
         let mut exprs = Vec::with_capacity(16);
+
         ops.push(Op::Eval);
         exprs.push(self);
 
         while let Some(op) = ops.pop() {
             match op {
                 Op::Eval => match exprs.pop().unwrap() {
-                    Var(s) => exprs.push(Var(s)),
+                    Var(var) => exprs.push(Var(var)),
+
                     App(fun, arg) => {
-                        exprs.push(*fun);
-                        exprs.push(*arg);
-                        ops.push(Op::Apply);
-                        ops.push(Op::Eval);
-                        ops.push(Op::Swap);
-                        ops.push(Op::Eval);
+                        let fun = *fun;
+                        match fun {
+                            Lambda(s, mut body) => {
+                                body.replace(&s, &*arg);
+                                ops.push(Op::Eval);
+                                exprs.push(*body);
+                            },
+                            fun => {
+                                ops.push(Op::Apply(*arg));
+                                ops.push(Op::Eval);
+                                exprs.push(fun);
+                            },
+                        }
                     },
+
                     Lambda(arg, body) => {
-                        exprs.push(*body);
                         ops.push(Op::Lambda(arg));
                         ops.push(Op::Eval);
+                        exprs.push(*body);
                     },
                 },
 
-                Op::Swap => {
-                    let x = exprs.pop().unwrap();
-                    let y = exprs.pop().unwrap();
-                    exprs.push(x);
-                    exprs.push(y);
+                Op::Apply(arg) => match exprs.pop().unwrap().eval() {
+                    Lambda(s, mut body) => {
+                        body.replace(&s, &arg);
+                        ops.push(Op::Eval);
+                        exprs.push(*body);
+                    },
+                    fun => {
+                        ops.push(Op::ApplyTo(fun));
+                        ops.push(Op::Eval);
+                        exprs.push(arg);
+                    },
                 },
 
-                Op::Apply => {
-                    let fun = exprs.pop().unwrap();
+                Op::ApplyTo(fun) => {
                     let arg = exprs.pop().unwrap();
-                    match fun {
-                        Lambda(name, mut body) => {
-                            body.replace(&name, &arg);
-                            exprs.push(*body);
-                            ops.push(Op::Eval);
-                        },
-                        _ => exprs.push(App(Box::new(fun), Box::new(arg))),
-                    }
+                    exprs.push(App(Box::new(fun), Box::new(arg)));
                 },
 
                 Op::Lambda(arg) => {
@@ -84,9 +91,10 @@ impl Expr {
                 },
             }
         }
-        let result = exprs.pop().unwrap();
-        debug_assert!(exprs.len() == 0);
-        result
+
+        let res = exprs.pop().unwrap();
+        debug_assert_eq!(exprs.len(), 0);
+        res
     }
 
     pub fn replace(&mut self, name: &Rc<str>, val: &Self) {
@@ -132,7 +140,8 @@ impl Clone for Expr {
                     Var(sym) => dests.push(Var(match sym {
                         Dyn(s) => Dyn(s.clone()),
                         Static(s) => {
-                            let lambda = ops.iter()
+                            let lambda = ops
+                                .iter()
                                 .filter_map(|x| match x {
                                     Op::Lambda(orig, clone) => {
                                         Some((*orig, clone))

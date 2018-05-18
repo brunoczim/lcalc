@@ -1,8 +1,19 @@
-:comment combinators
+:comment combinators and utilities
 :def I \x.x
 :def K \x.\y.x
 :def S \f.\g.\x.f x (g x)
 :def Y \f.(\g.f (g g)) (\g.f (g g))
+:comment compose
+:def O \f.\g.\x.f (g x)
+
+:comment data structures
+:def PAIR \x.\y.\f.f x y
+:def TRIPLET \x.\y.\z.\f.f x y z
+:def FST-2 \x.x K
+:def SEC-2 \x.x (\x.I)
+:def FST-3 \x.x (\x.\y.\z.x)
+:def SEC-3 \x.x (\x.K)
+:def TRD-3 \x.x (\x.\y.I)
 
 :comment natural numbers
 :def succ \n.\f.\x.n f (f x)
@@ -45,4 +56,4 @@
 :def <= \m.\n.IS-0 (- m n)
 :def > \m.\n.~ (<= m n)
 :def < \m.\n.~ (>= m n)
-:def = \m.\n.& (IS-0 (- m n)) (IS-0 (- n m))
+:def = \m.\n.& (<= m n) (>= m n)
