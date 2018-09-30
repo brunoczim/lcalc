@@ -101,27 +101,28 @@ impl Expr {
         let mut stack = Vec::with_capacity(8);
         stack.push(self);
         while let Some(refer) = stack.pop() {
-            match refer {
+            let shall_replace = match refer {
                 Var(sym) => match sym {
-                    Dyn(s) => {
-                        if &**s == &**name {
-                            *refer = val.clone();
-                        }
-                    },
-                    Static(s) => {
-                        if Rc::ptr_eq(s, name) {
-                            *refer = val.clone();
-                        }
-                    },
+                    Dyn(s) => &**s == &**name,
+
+                    Static(s) => Rc::ptr_eq(s, name),
                 },
+
                 App(fun, arg) => {
                     stack.reserve(2);
                     stack.push(fun);
                     stack.push(arg);
+                    continue;
                 },
+
                 Lambda(_, body) => {
                     stack.push(body);
+                    continue;
                 },
+            };
+
+            if shall_replace {
+                *refer = val.clone()
             }
         }
     }
