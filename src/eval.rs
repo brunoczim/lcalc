@@ -103,19 +103,23 @@ impl Expr {
         while let Some(refer) = stack.pop() {
             match refer {
                 Var(sym) => match sym {
-                    Dyn(s) => if &**s == &**name {
-                        *refer = val.clone();
+                    Dyn(s) => {
+                        if &**s == &**name {
+                            *refer = val.clone();
+                        }
                     },
-                    Static(s) => if Rc::ptr_eq(s, name) {
-                        *refer = val.clone();
+                    Static(s) => {
+                        if Rc::ptr_eq(s, name) {
+                            *refer = val.clone();
+                        }
                     },
                 },
-                App(ref mut fun, ref mut arg) => {
+                App(fun, arg) => {
                     stack.reserve(2);
                     stack.push(fun);
                     stack.push(arg);
                 },
-                Lambda(_, ref mut body) => {
+                Lambda(_, body) => {
                     stack.push(body);
                 },
             }
@@ -205,7 +209,7 @@ impl fmt::Display for Expr {
                     App(fun, arg) => {
                         let mut between = String::new();
                         match **fun {
-                            Lambda(_, _) => {
+                            Lambda(..) => {
                                 fmtr.write_str("(")?;
                                 between += ")";
                             },
